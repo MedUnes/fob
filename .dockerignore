@@ -1,0 +1,17 @@
+/.docker/prod/*
+!/.docker/prod/gin/builder/*.*
+!/.docker/prod/gin/init.d/*.*
+!/.docker/prod/.env
+.dockerignore
+./drones
+CODEOWNERS
+Makefile
+.git
+.env.local
+.env.test
+.gitignore
+.gitlab-ci.yml
+docker-compose.yml
+Dockerfile
+/build/*
+/.husky/*
