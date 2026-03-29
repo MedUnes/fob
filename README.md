@@ -50,6 +50,12 @@ handles telemetry based on real-time network conditions.
       events to the Station while maintaining chronological order. Once the cache is empty, the FSM transitions back to
       `CONNECTED`.
 
+The screenshot below shows an edge daemon's structured JSON logs as it transitions through all three states in real time:
+the connection drops, events are cached locally during AUTONOMOUS mode, the station becomes healthy again, and the daemon
+flushes the stale events through DEGRADED before returning to CONNECTED.
+
+![Edge daemon FSM state transitions](edges.jpg)
+
 ---
 
 ## 4. Security Architecture
@@ -94,6 +100,22 @@ The Station exposes a dedicated, internal-only HTTP port (5003) for Prometheus. 
 updates `GaugeVec` metrics in memory. Prometheus periodically pulls these metrics, allowing Grafana to visualize fleet
 health, altitude, and battery levels with zero impact on the ingestion database.
 
+![Grafana fleet monitoring dashboard](grafana.jpg)
+
+The Grafana dashboard above shows three panels fed by the Station's Prometheus metrics:
+
+- **Altitude Profile** — real-time altitude traces for each drone, showing GPS jitter and altitude hold behavior.
+- **Battery Degradation** — battery percentage over time, making it easy to predict when a drone must return to base.
+- **Drone Active States** — a timeline of each drone's CONNECTED state, visualizing uptime and connectivity gaps.
+
+### Station Ingestion Log
+
+As events arrive, the Station validates signatures, writes them to the SQLite database, and logs each batch. The
+screenshot below shows the raw event rows stored in `storage/drones.db`, with timestamps, coordinates, altitude, battery
+level, and the originating edge name.
+
+![Station daemon ingestion log](stationd.jpg)
+
 ---
 
 ## 6. Evolution to Production IoT Hardware
@@ -129,5 +151,68 @@ connectivity is sparse but data integrity is paramount:
 
 ---
 
-Would you like me to write a `docker-compose.yml` file that spins up this entire layered architecture (Nginx, Stationd,
-Prometheus, Grafana, and the Edge Simulators) so you can run it with a single command?
+## 8. Getting Started
+
+Running the system end-to-end requires the following steps, executed in order.
+
+### Step 1: Generate the TLS Certificates
+
+Create the server certificate and the mTLS Certificate Authority used for mutual authentication between edge devices and
+the station.
+
+```bash
+make gen-cert    # generates storage/cert.pem and storage/key.pem (server TLS)
+make gen-mtls    # generates storage/ca.pem and storage/ca.key (mTLS CA)
+```
+
+### Step 2: Initialize and Populate the Database
+
+This creates the SQLite database at `storage/drones.db`, generates Ed25519 signing key pairs and mTLS client
+certificates for each edge device, and inserts them into the `edges` table.
+
+```bash
+make init-db
+```
+
+By default 24 edge devices are created. To change the number, run the command directly:
+
+```bash
+go run ./cmd/station --edges 8 init-db
+```
+
+### Step 3: Start the Station Daemon
+
+The station listens on two ports:
+
+- **5002** (HTTPS / mTLS) — ingestion endpoint for edge telemetry and health checks.
+- **5003** (HTTP) — Prometheus metrics endpoint (`/metrics`).
+
+```bash
+make run-station
+```
+
+### Step 4: Start the HTTP Server
+
+The HTTP server exposes the REST API and the web dashboard on port **8080**. The dashboard includes a live map
+(Leaflet / OpenStreetMap) that plots every drone's current position. Clicking a marker shows the drone's ID, altitude,
+and battery level.
+
+![Live fleet map dashboard](map.jpg)
+
+```bash
+make run-http
+```
+
+### Step 5: Launch Edge Devices
+
+Start as many edge simulators as you want, each with a unique name that matches one of the devices created in Step 2
+(e.g. Aero, Bolt, Cyclone, …).
+
+```bash
+make run-edge name=Aero
+make run-edge name=Bolt
+make run-edge name=Cyclone
+```
+
+Each edge connects to the station over mTLS, generates telemetry, signs every event with its Ed25519 private key, and
+transitions through the FSM states (CONNECTED → AUTONOMOUS → DEGRADED) as network conditions change.
